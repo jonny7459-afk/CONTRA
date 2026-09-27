@@ -1,0 +1,22 @@
+{
+  "short_name": "Contra2D",
+  "name": "Contra 16Bit Arcade Shooter",
+  "description": "Juego de disparos arcade estilo Contra en 2D con vista lateral, armas variadas, enemigos y jefe final.",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "./index.html",
+  "background_color": "#050810",
+  "theme_color": "#ff3300",
+  "display": "standalone",
+  "orientation": "landscape"
+}
