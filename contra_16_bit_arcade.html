@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Contra: Neo Alien Assault (16-Bit Edition)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #08070c;
+            color: #ffffff;
+            font-family: 'Courier New', Courier, monospace;
+            user-select: none;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            box-shadow: 0 0 30px rgba(0, 255, 200, 0.2);
+            background: #000;
+        }
+        .touch-btn {
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(4px);
+            touch-action: manipulation;
+        }
+        .touch-btn:active {
+            background: rgba(255, 215, 0, 0.4);
+            border-color: #ffd700;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen relative select-none">
+
+    <!-- Top Bar Navigation/Info -->
+    <div class="absolute top-2 left-4 right-4 flex justify-between items-center z-10 text-xs sm:text-sm text-cyan-400 font-bold tracking-wider pointer-events-none">
+        <span class="bg-slate-900/80 px-3 py-1 rounded-md border border-cyan-500/30">STAGE 01: JUNGLE CORE</span>
+        <span class="bg-slate-900/80 px-3 py-1 rounded-md border border-cyan-500/30 hidden sm:inline">CONTROLS: ARROWS/WASD = AIM/MOVE | Z/J = FIRE | X/K = JUMP</span>
+    </div>
+
+    <!-- Main Game Canvas Wrapper -->
+    <div class="relative flex items-center justify-center w-full h-full max-w-5xl p-2">
+        <canvas id="gameCanvas" width="800" height="450" class="w-full h-auto max-h-[85vh] rounded-lg border border-slate-800"></canvas>
+    </div>
+
+    <!-- Mobile Touch Controls Overlay -->
+    <div id="touchControls" class="fixed bottom-3 left-0 right-0 px-4 py-2 flex justify-between items-end z-20 pointer-events-none md:hidden">
+        <!-- D-Pad -->
+        <div class="grid grid-cols-3 gap-1 w-36 h-36 pointer-events-auto">
+            <div></div>
+            <button id="btnUp" class="touch-btn rounded-t-lg flex items-center justify-center text-white text-lg font-bold">▲</button>
+            <div></div>
+            <button id="btnLeft" class="touch-btn rounded-l-lg flex items-center justify-center text-white text-lg font-bold">◄</button>
+            <div class="touch-btn bg-black/30"></div>
+            <button id="btnRight" class="touch-btn rounded-r-lg flex items-center justify-center text-white text-lg font-bold">►</button>
+            <div></div>
+            <button id="btnDown" class="touch-btn rounded-b-lg flex items-center justify-center text-white text-lg font-bold">▼</button>
+            <div></div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex gap-3 pointer-events-auto">
+            <button id="btnJump" class="touch-btn w-16 h-16 rounded-full flex items-center justify-center text-yellow-300 font-bold text-sm shadow-lg border-yellow-500/50">JUMP</button>
+            <button id="btnFire" class="touch-btn w-20 h-20 rounded-full flex items-center justify-center text-red-400 font-bold text-base shadow-lg border-red-500/50">FIRE</button>
+        </div>
+    </div>
+
+    <script>
+        class AudioEngine {
+            constructor() {
+                this.ctx = null;
+            }
+            init() {
+                if (!this.ctx) {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    this.ctx = new AudioCtx();
+                }
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+            playTone(freq, type, duration, vol = 0.1) {
+                if (!this.ctx) return;
+                try {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+                    gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start();
+                    osc.stop(this.ctx.currentTime + duration);
+                } catch(e) {}
+            }
+            playNoise(duration, vol = 0.2, filterFreq = 1000) {
+                if (!this.ctx) return;
+                try {
+                    const bufferSize = this.ctx.sampleRate * duration;
+                    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                    
+                    const noise = this.ctx.createBufferSource();
+                    noise.buffer = buffer;
+
+                    const filter = this.ctx.createBiquadFilter();
+                    filter.type = 'lowpass';
+                    filter.frequency.setValueAtTime(filterFreq, this.ctx.currentTime);
+
+                    const gain = this.ctx.createGain();
+                    gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+
+                    noise.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    noise.start();
+                } catch(e) {}
+            }
+            shootPistol() { this.playTone(600, 'square', 0.08, 0.15); }
+            shootMachineGun() { this.playTone(800, 'sawtooth', 0.06, 0.12); }
+            shootSpread() { this.playTone(300, 'sawtooth', 0.15, 0.25); this.playNoise(0.1, 0.1, 2000); }
+            shootLaser() { 
+                if (!this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(1200, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(200, this.ctx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.2);
+            }
+            shootFlame() { this.playNoise(0.25, 0.25, 600); }
+            jump() { this.playTone(300, 'sine', 0.15, 0.15); }
+            explosion() { this.playNoise(0.5, 0.4, 400); }
+            pickup() { this.playTone(880, 'triangle', 0.1, 0.2); setTimeout(() => this.playTone(1760, 'triangle', 0.15, 0.2), 60); }
+            bossHit() { this.playTone(150, 'sawtooth', 0.08, 0.3); }
+        }
+
+        const audio = new AudioEngine();
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const V_WIDTH = 800;
+        const V_HEIGHT = 450;
+        const GROUND_Y = 370;
+
+        // Key State Tracker
+        const keys = {
+            left: false, right: false, up: false, down: false,
+            jump: false, fire: false, jumpPressed: false, firePressed: false
+        };
+
+        class Particle {
+            constructor(x, y, vx, vy, color, size, life, glow = false) {
+                this.x = x; this.y = y;
+                this.vx = vx; this.vy = vy;
+                this.color = color;
+                this.size = size;
+                this.maxLife = life;
+                this.life = life;
+                this.glow = glow;
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += 0.1; // mild gravity
+                this.life--;
+            }
+            draw(ctx, offsetX) {
+                const alpha = Math.max(0, this.life / this.maxLife);
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                if (this.glow) {
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = this.color;
+                }
+                ctx.fillStyle = this.color;
+                ctx.fillRect(Math.floor(this.x - offsetX), Math.floor(this.y), this.size, this.size);
+                ctx.restore();
+            }
+        }
+
+        class ParticleSystem {
+            constructor() {
+                this.particles = [];
+                this.screenShake = 0;
+            }
+            add(x, y, vx, vy, color, size = 3, life = 20, glow = false) {
+                this.particles.push(new Particle(x, y, vx, vy, color, size, life, glow));
+            }
+            explosion(x, y, count = 25, color = '#ff5500') {
+                this.screenShake = 12;
+                audio.explosion();
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 1 + Math.random() * 6;
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed - 1;
+                    const colors = [color, '#ffcc00', '#ff2200', '#ffffff', '#444444'];
+                    const col = colors[Math.floor(Math.random() * colors.length)];
+                    this.add(x, y, vx, vy, col, Math.floor(Math.random() * 4 + 2), Math.floor(Math.random() * 25 + 15), true);
+                }
+            }
+            update() {
+                if (this.screenShake > 0) this.screenShake *= 0.85;
+                if (this.screenShake < 0.5) this.screenShake = 0;
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    this.particles[i].update();
+                    if (this.particles[i].life <= 0) this.particles.splice(i, 1);
+                }
+            }
+            draw(ctx, offsetX) {
+                this.particles.forEach(p => p.draw(ctx, offsetX));
+            }
+        }
+
+        const particleSystem = new ParticleSystem();
+
+        const WEAPONS = {
+            NORMAL: { name: 'NORMAL', code: 'P', rate: 12, damage: 1, speed: 10, color: '#ffffaa' },
+            MACHINE: { name: 'MACHINE GUN', code: 'M', rate: 6, damage: 1.2, speed: 12, color: '#ffcc00' },
+            SPREAD: { name: 'SPREAD SHOT', code: 'S', rate: 18, damage: 1.5, speed: 9, color: '#ff3366' },
+            LASER: { name: 'LASER BEAM', code: 'L', rate: 14, damage: 3.5, speed: 16, color: '#00ffff' },
+            FLAME: { name: 'FLAMETHROWER', code: 'F', rate: 10, damage: 2.0, speed: 6, color: '#ff5500' }
+        };
+
+        class Bullet {
+            constructor(x, y, dirX, dirY, weapon, isEnemy = false) {
+                this.x = x;
+                this.y = y;
+                this.dirX = dirX;
+                this.dirY = dirY;
+                this.weapon = weapon;
+                this.isEnemy = isEnemy;
+                this.speed = isEnemy ? 5 : weapon.speed;
+                this.life = 100;
+                this.angle = Math.atan2(dirY, dirX);
+                this.rot = 0;
+            }
+            update() {
+                this.x += this.dirX * this.speed;
+                this.y += this.dirY * this.speed;
+                this.life--;
+                this.rot += 0.2;
+
+                // Fire Trail FX
+                if (!this.isEnemy && this.weapon.name === 'FLAMETHROWER') {
+                    particleSystem.add(this.x, this.y, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, '#ffaa00', 4, 12, true);
+                } else if (!this.isEnemy && this.weapon.name === 'LASER') {
+                    particleSystem.add(this.x, this.y, 0, 0, '#00ffff', 3, 8, true);
+                }
+            }
+            draw(ctx, offsetX) {
+                ctx.save();
+                ctx.translate(Math.floor(this.x - offsetX), Math.floor(this.y));
+
+                if (this.isEnemy) {
+                    ctx.fillStyle = '#ff3333';
+                    ctx.shadowBlur = 8;
+                    ctx.shadowColor = '#ff0000';
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    ctx.rotate(this.angle);
+                    switch(this.weapon.name) {
+                        case 'LASER':
+                            ctx.fillStyle = '#00ffff';
+                            ctx.shadowBlur = 12;
+                            ctx.shadowColor = '#00ffff';
+                            ctx.fillRect(-15, -3, 30, 6);
+                            ctx.fillStyle = '#ffffff';
+                            ctx.fillRect(-12, -1, 24, 2);
+                            break;
+                        case 'SPREAD':
+                            ctx.fillStyle = '#ff2266';
+                            ctx.shadowBlur = 8;
+                            ctx.shadowColor = '#ff2266';
+                            ctx.beginPath();
+                            ctx.arc(0, 0, 5, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.fillStyle = '#ffffff';
+                            ctx.fillRect(-2, -2, 4, 4);
+                            break;
+                        case 'FLAMETHROWER':
+                            ctx.save();
+                            ctx.rotate(this.rot);
+                            ctx.fillStyle = '#ff6600';
+                            ctx.shadowBlur = 10;
+                            ctx.shadowColor = '#ff3300';
+                            ctx.fillRect(-6, -6, 12, 12);
+                            ctx.fillStyle = '#ffff00';
+                            ctx.fillRect(-3, -3, 6, 6);
+                            ctx.restore();
+                            break;
+                        default: // NORMAL / MACHINE
+                            ctx.fillStyle = '#ffff55';
+                            ctx.shadowBlur = 6;
+                            ctx.shadowColor = '#ffaa00';
+                            ctx.fillRect(-6, -2, 12, 4);
+                            break;
+                    }
+                }
+                ctx.restore();
+            }
+        }
+
+        class Player {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vx = 0;
+                this.vy = 0;
+                this.width = 24;
+                this.height = 42;
+                this.isGrounded = false;
+                this.isCrouching = false;
+                this.facing = 1; // 1 = right, -1 = left
+                this.aimX = 1;
+                this.aimY = 0;
+                this.weapon = WEAPONS.NORMAL;
+                this.fireCooldown = 0;
+                this.lives = 3;
+                this.invulnerable = 0;
+                this.score = 0;
+                this.animFrame = 0;
+                this.animTimer = 0;
+                this.isDead = false;
+                this.respawnTimer = 0;
+            }
+
+            update(platforms) {
+                if (this.isDead) {
+                    this.respawnTimer--;
+                    if (this.respawnTimer <= 0 && this.lives > 0) {
+                        this.respawn();
+                    }
+                    return;
+                }
+
+                if (this.invulnerable > 0) this.invulnerable--;
+
+                // Movement Input
+                const moveSpeed = 3.2;
+                if (keys.left) {
+                    this.vx = -moveSpeed;
+                    this.facing = -1;
+                } else if (keys.right) {
+                    this.vx = moveSpeed;
+                    this.facing = 1;
+                } else {
+                    this.vx = 0;
+                }
+
+                // Crouching
+                this.isCrouching = keys.down && this.isGrounded;
+
+                // 8-Way Aiming Logic
+                this.aimX = this.facing;
+                this.aimY = 0;
+
+                if (keys.up) {
+                    this.aimY = -1;
+                    if (!keys.left && !keys.right) this.aimX = 0;
+                } else if (keys.down) {
+                    if (!this.isGrounded) {
+                        this.aimY = 1;
+                        if (!keys.left && !keys.right) this.aimX = 0;
+                    }
+                }
+
+                // Normalizing aim direction vector
+                if (this.aimX !== 0 && this.aimY !== 0) {
+                    const norm = Math.hypot(this.aimX, this.aimY);
+                    this.aimX /= norm;
+                    this.aimY /= norm;
+                }
+
+                // Jumping
+                if (keys.jumpPressed && this.isGrounded && !this.isCrouching) {
+                    this.vy = -10.5;
+                    this.isGrounded = false;
+                    audio.jump();
+                }
+
+                // Apply Gravity
+                this.vy += 0.55;
+                if (this.vy > 12) this.vy = 12;
+
+                // Horizontal Physics
+                this.x += this.vx;
+
+                // Vertical Physics & Platform Collisions
+                this.y += this.vy;
+                this.isGrounded = false;
+
+                platforms.forEach(plat => {
+                    if (this.x + this.width / 2 > plat.x &&
+                        this.x - this.width / 2 < plat.x + plat.w) {
+                        // Check landing on top
+                        if (this.vy >= 0 && this.y + this.height / 2 >= plat.y &&
+                            this.y + this.height / 2 - this.vy <= plat.y + 10) {
+                            this.y = plat.y - this.height / 2;
+                            this.vy = 0;
+                            this.isGrounded = true;
+                        }
+                    }
+                });
+
+                // Bottom Pit Boundary
+                if (this.y > V_HEIGHT + 50) {
+                    this.takeDamage();
+                }
+
+                // Firing logic
+                if (this.fireCooldown > 0) this.fireCooldown--;
+                if ((keys.fire || keys.firePressed) && this.fireCooldown <= 0) {
+                    this.shoot();
+                }
+
+                // Animation timer
+                this.animTimer++;
+                if (this.animTimer % 6 === 0) {
+                    this.animFrame = (this.animFrame + 1) % 4;
+                }
+            }
+
+            shoot() {
+                this.fireCooldown = this.weapon.rate;
+                const muzzleDist = 20;
+                const spawnX = this.x + this.aimX * muzzleDist;
+                const spawnY = this.y + (this.isCrouching ? 5 : -4) + this.aimY * muzzleDist;
+
+                // Muzzle Flash Particle FX
+                particleSystem.add(spawnX, spawnY, this.aimX * 2, this.aimY * 2, '#ffffff', 6, 4, true);
+
+                if (this.weapon.name === 'SPREAD') {
+                    audio.shootSpread();
+                    const spreadAngles = [-0.35, -0.18, 0, 0.18, 0.35];
+                    const baseAngle = Math.atan2(this.aimY, this.aimX);
+                    spreadAngles.forEach(ang => {
+                        const dirX = Math.cos(baseAngle + ang);
+                        const dirY = Math.sin(baseAngle + ang);
+                        bullets.push(new Bullet(spawnX, spawnY, dirX, dirY, this.weapon));
+                    });
+                } else {
+                    if (this.weapon.name === 'MACHINE GUN') audio.shootMachineGun();
+                    else if (this.weapon.name === 'LASER') audio.shootLaser();
+                    else if (this.weapon.name === 'FLAMETHROWER') audio.shootFlame();
+                    else audio.shootPistol();
+
+                    bullets.push(new Bullet(spawnX, spawnY, this.aimX, this.aimY, this.weapon));
+                }
+            }
+
+            takeDamage() {
+                if (this.invulnerable > 0 || this.isDead) return;
+                this.lives--;
+                this.isDead = true;
+                this.respawnTimer = 60;
+                particleSystem.explosion(this.x, this.y, 35, '#ff2200');
+            }
+
+            respawn() {
+                this.isDead = false;
+                this.x = Math.max(80, cameraX + 100);
+                this.y = 100;
+                this.vy = 0;
+                this.invulnerable = 120; // 2 seconds invulnerability
+                this.weapon = WEAPONS.NORMAL; // reset to default
+            }
+
+            draw(ctx, offsetX) {
+                if (this.isDead) return;
+                if (this.invulnerable % 6 > 3) return; // Flicker FX when hit
+
+                ctx.save();
+                ctx.translate(Math.floor(this.x - offsetX), Math.floor(this.y));
+
+                // Character Sprite Construction (16-bit HD Pixel Art Style)
+                const isRunning = this.vx !== 0 && this.isGrounded;
+                const legOffset = isRunning ? Math.sin(this.animTimer * 0.3) * 6 : 0;
+
+                // Legs / Boots
+                ctx.fillStyle = '#223355'; // Pants
+                if (this.isCrouching) {
+                    ctx.fillRect(-10, 8, 20, 10);
+                    ctx.fillStyle = '#111';
+                    ctx.fillRect(-12, 14, 10, 6);
+                    ctx.fillRect(2, 14, 10, 6);
+                } else {
+                    ctx.fillRect(-8, 2, 6, 14 + legOffset);
+                    ctx.fillRect(2, 2, 6, 14 - legOffset);
+                    // Boots
+                    ctx.fillStyle = '#8b4513';
+                    ctx.fillRect(-9, 14 + legOffset, 8, 6);
+                    ctx.fillRect(1, 14 - legOffset, 8, 6);
+                }
+
+                // Torso / Vest
+                ctx.fillStyle = '#cc2222'; // Red Commando Vest
+                ctx.fillRect(-8, -12, 16, 16);
+                ctx.fillStyle = '#ffaa77'; // Muscle Skin Tone
+                ctx.fillRect(-4, -10, 8, 12);
+
+                // Head & Bandana
+                ctx.fillStyle = '#ffaa77'; // Face
+                ctx.fillRect(-6, -22, 12, 10);
+                ctx.fillStyle = '#ff0000'; // Red Bandana
+                ctx.fillRect(-7, -24, 14, 4);
+                // Bandana Tails
+                ctx.fillRect(this.facing === 1 ? -11 : 5, -23, 6, 3);
+
+                // Arm & Heavy Cannon / Gun
+                ctx.save();
+                const armY = -6;
+                const gunAngle = Math.atan2(this.aimY, this.aimX);
+                ctx.translate(0, armY);
+                ctx.rotate(gunAngle);
+
+                // Weapon Body
+                ctx.fillStyle = '#444455';
+                ctx.fillRect(0, -3, 18, 6);
+                ctx.fillStyle = '#111';
+                ctx.fillRect(4, -1, 12, 2);
+
+                // Hands
+                ctx.fillStyle = '#ffaa77';
+                ctx.fillRect(2, -2, 5, 4);
+
+                ctx.restore();
+                ctx.restore();
+            }
+        }
+
+        class Enemy {
+            constructor(x, y, type = 'SOLDIER') {
+                this.x = x;
+                this.y = y;
+                this.type = type; // SOLDIER, TURRET, DRONE
+                this.hp = type === 'TURRET' ? 8 : 2;
+                this.maxHp = this.hp;
+                this.shootTimer = Math.floor(Math.random() * 60);
+                this.facing = -1;
+                this.width = type === 'TURRET' ? 32 : 20;
+                this.height = type === 'TURRET' ? 32 : 36;
+            }
+            update(player) {
+                if (this.type === 'SOLDIER') {
+                    // Patrol toward player
+                    this.facing = player.x < this.x ? -1 : 1;
+                    if (Math.abs(player.x - this.x) < 350) {
+                        this.x += this.facing * 1.2;
+                    }
+                    this.shootTimer++;
+                    if (this.shootTimer > 90) {
+                        this.shootTimer = 0;
+                        const angle = Math.atan2(player.y - this.y, player.x - this.x);
+                        bullets.push(new Bullet(this.x, this.y - 4, Math.cos(angle), Math.sin(angle), null, true));
+                    }
+                } else if (this.type === 'TURRET') {
+                    this.shootTimer++;
+                    if (this.shootTimer > 80 && Math.abs(player.x - this.x) < 400) {
+                        this.shootTimer = 0;
+                        const angle = Math.atan2(player.y - this.y, player.x - this.x);
+                        bullets.push(new Bullet(this.x, this.y, Math.cos(angle), Math.sin(angle), null, true));
+                    }
+                }
+            }
+            draw(ctx, offsetX) {
+                ctx.save();
+                ctx.translate(Math.floor(this.x - offsetX), Math.floor(this.y));
+
+                if (this.type === 'SOLDIER') {
+                    // Enemy Soldier (Purple/Blue uniform)
+                    ctx.fillStyle = '#228844'; // Helmet
+                    ctx.fillRect(-6, -18, 12, 6);
+                    ctx.fillStyle = '#ffccaa'; // Face
+                    ctx.fillRect(-5, -12, 10, 5);
+                    ctx.fillStyle = '#223388'; // Suit
+                    ctx.fillRect(-7, -7, 14, 14);
+                    // Gun
+                    ctx.fillStyle = '#111';
+                    ctx.fillRect(this.facing === 1 ? 0 : -14, -2, 14, 4);
+                } else if (this.type === 'TURRET') {
+                    // Armored Wall Turret
+                    ctx.fillStyle = '#555566';
+                    ctx.fillRect(-16, -16, 32, 32);
+                    ctx.fillStyle = '#ff3333'; // Core Eye
+                    ctx.fillRect(-6, -6, 12, 12);
+                    ctx.fillStyle = '#222';
+                    ctx.fillRect(-12, -12, 24, 4);
+                }
+                ctx.restore();
+            }
+        }
+
+        class FlyingPod {
+            constructor(x, y, weaponType) {
+                this.x = x;
+                this.y = y;
+                this.startX = x;
+                this.weaponType = weaponType;
+                this.hp = 1;
+                this.t = 0;
+            }
+            update() {
+                this.t += 0.04;
+                this.x += 1.5;
+                this.y += Math.sin(this.t) * 2;
+            }
+            draw(ctx, offsetX) {
+                ctx.save();
+                ctx.translate(Math.floor(this.x - offsetX), Math.floor(this.y));
+                // Falcon Red Capsule
+                ctx.fillStyle = '#ff2200';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#ff0000';
+                ctx.beginPath();
+                ctx.arc(0, 0, 12, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.weaponType.code, 0, 1);
+                ctx.restore();
+            }
+        }
+
+        class BossFortress {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.width = 160;
+                this.height = 200;
+                this.hp = 100;
+                this.maxHp = 100;
+                this.phase = 1; // 1 = Outer Gates & Turrets, 2 = Exposed Core
+                this.turret1Hp = 20;
+                this.turret2Hp = 20;
+                this.timer = 0;
+                this.corePulse = 0;
+            }
+
+            update(player) {
+                this.timer++;
+                this.corePulse += 0.08;
+
+                if (this.phase === 1) {
+                    // Check if both turrets destroyed -> trigger Phase 2
+                    if (this.turret1Hp <= 0 && this.turret2Hp <= 0) {
+                        this.phase = 2;
+                        particleSystem.explosion(this.x + 80, this.y + 100, 50, '#ffaa00');
+                    }
+
+                    // Turret attacks
+                    if (this.turret1Hp > 0 && this.timer % 70 === 0) {
+                        const angle = Math.atan2(player.y - (this.y + 50), player.x - (this.x + 20));
+                        bullets.push(new Bullet(this.x + 20, this.y + 50, Math.cos(angle), Math.sin(angle), null, true));
+                    }
+                    if (this.turret2Hp > 0 && this.timer % 85 === 0) {
+                        const angle = Math.atan2(player.y - (this.y + 140), player.x - (this.x + 20));
+                        bullets.push(new Bullet(this.x + 20, this.y + 140, Math.cos(angle), Math.sin(angle), null, true));
+                    }
+                } else if (this.phase === 2) {
+                    // Aggressive Alien Core Attacks
+                    if (this.timer % 40 === 0) {
+                        const angle = Math.atan2(player.y - (this.y + 90), player.x - (this.x + 40));
+                        bullets.push(new Bullet(this.x + 40, this.y + 90, Math.cos(angle), Math.sin(angle), null, true));
+                    }
+                }
+            }
+
+            draw(ctx, offsetX) {
+                ctx.save();
+                ctx.translate(Math.floor(this.x - offsetX), Math.floor(this.y));
+
+                // Base Metal Structure
+                ctx.fillStyle = '#2b303a';
+                ctx.fillRect(0, 0, this.width, this.height);
+                ctx.fillStyle = '#1c1f26';
+                ctx.fillRect(10, 10, this.width - 20, this.height - 20);
+
+                // Armored Plates Details
+                ctx.strokeStyle = '#4f5866';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(5, 5, this.width - 10, this.height - 10);
+
+                if (this.phase === 1) {
+                    // Top Turret
+                    if (this.turret1Hp > 0) {
+                        ctx.fillStyle = '#778899';
+                        ctx.fillRect(-15, 35, 35, 30);
+                        ctx.fillStyle = '#ff2200';
+                        ctx.fillRect(-20, 47, 10, 6);
+                    } else {
+                        ctx.fillStyle = '#111';
+                        ctx.fillRect(-10, 35, 25, 30);
+                    }
+
+                    // Bottom Turret
+                    if (this.turret2Hp > 0) {
+                        ctx.fillStyle = '#778899';
+                        ctx.fillRect(-15, 125, 35, 30);
+                        ctx.fillStyle = '#ff2200';
+                        ctx.fillRect(-20, 137, 10, 6);
+                    } else {
+                        ctx.fillStyle = '#111';
+                        ctx.fillRect(-10, 125, 25, 30);
+                    }
+
+                    // Metal Shield Gate over Core
+                    ctx.fillStyle = '#3a4150';
+                    ctx.fillRect(30, 60, 60, 80);
+                    ctx.fillStyle = '#ff0000';
+                    ctx.fillRect(55, 95, 10, 10);
+                } else {
+                    // Phase 2: Pulsating Alien Eye Core Exposed
+                    const pulse = Math.sin(this.corePulse) * 4;
+                    ctx.fillStyle = '#110022';
+                    ctx.fillRect(20, 50, 80, 100);
+
+                    ctx.fillStyle = '#ff0055';
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = '#ff0055';
+                    ctx.beginPath();
+                    ctx.arc(60, 100, 28 + pulse, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#ffff00';
+                    ctx.beginPath();
+                    ctx.arc(60, 100, 12, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            }
+        }
+
+        let player = new Player(100, GROUND_Y - 40);
+        let boss = new BossFortress(2200, 170);
+        let cameraX = 0;
+        let bullets = [];
+        let enemies = [
+            new Enemy(450, GROUND_Y - 36, 'SOLDIER'),
+            new Enemy(750, GROUND_Y - 36, 'SOLDIER'),
+            new Enemy(900, 240, 'TURRET'),
+            new Enemy(1200, GROUND_Y - 36, 'SOLDIER'),
+            new Enemy(1450, 210, 'TURRET'),
+            new Enemy(1700, GROUND_Y - 36, 'SOLDIER')
+        ];
+        let pods = [
+            new FlyingPod(300, 150, WEAPONS.MACHINE),
+            new FlyingPod(800, 140, WEAPONS.SPREAD),
+            new FlyingPod(1300, 160, WEAPONS.LASER),
+            new FlyingPod(1750, 130, WEAPONS.FLAME)
+        ];
+
+        const platforms = [
+            // Main Ground
+            { x: 0, y: GROUND_Y, w: 2500, h: 80 },
+            // Elevated Jungle Wooden Bridges
+            { x: 300, y: 280, w: 180, h: 14 },
+            { x: 600, y: 220, w: 200, h: 14 },
+            { x: 880, y: 260, w: 160, h: 14 },
+            { x: 1200, y: 230, w: 220, h: 14 },
+            { x: 1550, y: 270, w: 180, h: 14 }
+        ];
+
+        function drawParallaxBackground(ctx, cameraX) {
+            // Sky Gradient
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, V_HEIGHT);
+            skyGrad.addColorStop(0, '#0a1026');
+            skyGrad.addColorStop(0.5, '#182848');
+            skyGrad.addColorStop(1, '#2b4c3f');
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, V_WIDTH, V_HEIGHT);
+
+            // Layer 1: Distant Mountains (0.1 Parallax)
+            ctx.fillStyle = '#14222e';
+            ctx.beginPath();
+            const off1 = cameraX * 0.1;
+            ctx.moveTo(0, 280);
+            for (let x = 0; x <= V_WIDTH; x += 40) {
+                const y = 200 + Math.sin((x + off1) * 0.01) * 40;
+                ctx.lineTo(x, y);
+            }
+            ctx.lineTo(V_WIDTH, V_HEIGHT);
+            ctx.lineTo(0, V_HEIGHT);
+            ctx.fill();
+
+            // Layer 2: Midground Jungle Ruins & Trees (0.3 Parallax)
+            ctx.fillStyle = '#1b3b2b';
+            const off2 = cameraX * 0.3;
+            for (let i = -50; i < V_WIDTH + 100; i += 90) {
+                const drawX = i - (off2 % 90);
+                ctx.beginPath();
+                ctx.arc(drawX, 310, 50, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Layer 3: Animated Waterfalls in background (0.5 Parallax)
+            ctx.fillStyle = 'rgba(100, 220, 255, 0.4)';
+            const off3 = cameraX * 0.5;
+            const waterX = 400 - off3;
+            if (waterX > -50 && waterX < V_WIDTH + 50) {
+                ctx.fillRect(waterX, 180, 25, 180);
+                // Water foam animation
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(waterX - 5, 355 + Math.sin(Date.now() * 0.01) * 3, 35, 6);
+            }
+        }
+
+        function drawTerrain(ctx, cameraX) {
+            platforms.forEach(plat => {
+                const screenX = plat.x - cameraX;
+                if (screenX + plat.w < 0 || screenX > V_WIDTH) return;
+
+                if (plat.y === GROUND_Y) {
+                    // Mud / Ground Base
+                    ctx.fillStyle = '#2d1e18';
+                    ctx.fillRect(screenX, plat.y, plat.w, plat.h);
+                    // Grass Top
+                    ctx.fillStyle = '#285828';
+                    ctx.fillRect(screenX, plat.y, plat.w, 10);
+                    ctx.fillStyle = '#488838';
+                    ctx.fillRect(screenX, plat.y, plat.w, 4);
+                } else {
+                    // Wooden Outpost Platforms
+                    ctx.fillStyle = '#5a3d28';
+                    ctx.fillRect(screenX, plat.y, plat.w, plat.h);
+                    ctx.fillStyle = '#8b5a2b';
+                    ctx.fillRect(screenX, plat.y, plat.w, 3);
+                }
+            });
+        }
+
+        function drawHUD(ctx) {
+            ctx.save();
+            // Score and High Score
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 16px monospace';
+            ctx.shadowBlur = 4;
+            ctx.shadowColor = '#000000';
+            ctx.fillText(`1P SCORE: ${player.score.toString().padStart(6, '0')}`, 20, 30);
+
+            // Player Lives Icon Badges
+            ctx.fillStyle = '#ff2200';
+            ctx.fillText(`REST: `, 20, 55);
+            for (let i = 0; i < player.lives; i++) {
+                ctx.fillRect(80 + i * 18, 44, 12, 12);
+            }
+
+            // Weapon Icon Badge
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.fillRect(V_WIDTH - 160, 15, 140, 40);
+            ctx.strokeStyle = '#00ffff';
+            ctx.strokeRect(V_WIDTH - 160, 15, 140, 40);
+
+            ctx.fillStyle = '#ffff00';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.fillText(`WEAPON`, V_WIDTH - 150, 30);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 14px sans-serif';
+            ctx.fillText(player.weapon.name, V_WIDTH - 150, 47);
+
+            // Boss Health Bar
+            if (cameraX > 1600 && boss.hp > 0) {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(V_WIDTH / 2 - 150, 20, 300, 22);
+                ctx.strokeStyle = '#ff0000';
+                ctx.strokeRect(V_WIDTH / 2 - 150, 20, 300, 22);
+
+                const healthPct = Math.max(0, boss.hp / boss.maxHp);
+                ctx.fillStyle = '#ff2200';
+                ctx.fillRect(V_WIDTH / 2 - 148, 22, 296 * healthPct, 18);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('FORTRESS CORE', V_WIDTH / 2, 35);
+            }
+            ctx.restore();
+        }
+
+        function gameLoop() {
+            // Screen Shake Transform
+            ctx.save();
+            if (particleSystem.screenShake > 0) {
+                const shakeX = (Math.random() - 0.5) * particleSystem.screenShake;
+                const shakeY = (Math.random() - 0.5) * particleSystem.screenShake;
+                ctx.translate(shakeX, shakeY);
+            }
+
+            // Update Camera Tracking
+            const targetCamX = player.x - V_WIDTH * 0.3;
+            cameraX += (targetCamX - cameraX) * 0.1;
+            if (cameraX < 0) cameraX = 0;
+            if (cameraX > 1600) cameraX = 1600; // Lock camera at boss battle arena
+
+            // Render Background Layer
+            drawParallaxBackground(ctx, cameraX);
+
+            // Update Entities
+            player.update(platforms);
+            boss.update(player);
+            particleSystem.update();
+
+            // Update Bullets
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                b.update();
+
+                // Bullet offscreen check
+                if (b.x < cameraX - 50 || b.x > cameraX + V_WIDTH + 50 || b.y < 0 || b.y > V_HEIGHT || b.life <= 0) {
+                    bullets.splice(i, 1);
+                    continue;
+                }
+
+                // Player Collision with Enemy Bullets
+                if (b.isEnemy) {
+                    if (Math.hypot(b.x - player.x, b.y - player.y) < 18) {
+                        bullets.splice(i, 1);
+                        player.takeDamage();
+                        continue;
+                    }
+                } else {
+                    // Player Bullets hitting Enemies
+                    let bulletRemoved = false;
+                    for (let j = enemies.length - 1; j >= 0; j--) {
+                        const e = enemies[j];
+                        if (Math.abs(b.x - e.x) < e.width / 2 && Math.abs(b.y - e.y) < e.height / 2) {
+                            e.hp -= b.weapon.damage;
+                            particleSystem.add(b.x, b.y, 0, 0, '#ffffff', 4, 6);
+                            bullets.splice(i, 1);
+                            bulletRemoved = true;
+
+                            if (e.hp <= 0) {
+                                particleSystem.explosion(e.x, e.y, 18, '#ff5500');
+                                player.score += e.type === 'TURRET' ? 500 : 100;
+                                enemies.splice(j, 1);
+                            }
+                            break;
+                        }
+                    }
+                    if (bulletRemoved) continue;
+
+                    // Player Bullets hitting Boss
+                    if (b.x > boss.x && b.x < boss.x + boss.width && b.y > boss.y && b.y < boss.y + boss.height) {
+                        if (boss.phase === 1) {
+                            if (b.y < boss.y + 100 && boss.turret1Hp > 0) {
+                                boss.turret1Hp -= b.weapon.damage;
+                                audio.bossHit();
+                            } else if (b.y >= boss.y + 100 && boss.turret2Hp > 0) {
+                                boss.turret2Hp -= b.weapon.damage;
+                                audio.bossHit();
+                            }
+                        } else {
+                            boss.hp -= b.weapon.damage;
+                            audio.bossHit();
+                            if (boss.hp <= 0) {
+                                particleSystem.explosion(boss.x + 60, boss.y + 100, 100, '#ff0055');
+                                player.score += 5000;
+                            }
+                        }
+                        bullets.splice(i, 1);
+                        continue;
+                    }
+                }
+            }
+
+            // Update Flying Pods
+            for (let i = pods.length - 1; i >= 0; i--) {
+                const pod = pods[i];
+                pod.update();
+                // Check bullet collisions on pod
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    const b = bullets[j];
+                    if (!b.isEnemy && Math.hypot(b.x - pod.x, b.y - pod.y) < 20) {
+                        particleSystem.explosion(pod.x, pod.y, 15, '#ffff00');
+                        audio.pickup();
+                        player.weapon = pod.weaponType;
+                        bullets.splice(j, 1);
+                        pods.splice(i, 1);
+                        break;
+                    }
+                }
+            }
+
+            // Update Enemies
+            enemies.forEach(e => e.update(player));
+
+            // Render World
+            drawTerrain(ctx, cameraX);
+            pods.forEach(p => p.draw(ctx, cameraX));
+            enemies.forEach(e => e.draw(ctx, cameraX));
+            boss.draw(ctx, cameraX);
+            player.draw(ctx, cameraX);
+            bullets.forEach(b => b.draw(ctx, cameraX));
+            particleSystem.draw(ctx, cameraX);
+
+            // Atmospheric Fog & Vignette Overlay
+            ctx.fillStyle = 'rgba(10, 20, 30, 0.08)';
+            ctx.fillRect(0, 0, V_WIDTH, V_HEIGHT);
+
+            // Render HUD
+            drawHUD(ctx);
+
+            ctx.restore();
+
+            // Game Over / Victory Overlay Check
+            if (player.lives <= 0) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(0, 0, V_WIDTH, V_HEIGHT);
+                ctx.fillStyle = '#ff0000';
+                ctx.font = 'bold 42px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', V_WIDTH / 2, V_HEIGHT / 2);
+                ctx.font = 'bold 18px monospace';
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText('PRESS ANY KEY TO RESTART', V_WIDTH / 2, V_HEIGHT / 2 + 50);
+            } else if (boss.hp <= 0) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+                ctx.fillRect(0, 0, V_WIDTH, V_HEIGHT);
+                ctx.fillStyle = '#00ffcc';
+                ctx.font = 'bold 36px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('MISSION COMPLETE!', V_WIDTH / 2, V_HEIGHT / 2 - 20);
+                ctx.fillStyle = '#ffff00';
+                ctx.font = 'bold 20px monospace';
+                ctx.fillText(`FINAL SCORE: ${player.score}`, V_WIDTH / 2, V_HEIGHT / 2 + 30);
+            }
+
+            // Reset single-frame key states
+            keys.jumpPressed = false;
+            keys.firePressed = false;
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function restartGame() {
+            player = new Player(100, GROUND_Y - 40);
+            boss = new BossFortress(2200, 170);
+            cameraX = 0;
+            bullets = [];
+            enemies = [
+                new Enemy(450, GROUND_Y - 36, 'SOLDIER'),
+                new Enemy(750, GROUND_Y - 36, 'SOLDIER'),
+                new Enemy(900, 240, 'TURRET'),
+                new Enemy(1200, GROUND_Y - 36, 'SOLDIER'),
+                new Enemy(1450, 210, 'TURRET'),
+                new Enemy(1700, GROUND_Y - 36, 'SOLDIER')
+            ];
+            pods = [
+                new FlyingPod(300, 150, WEAPONS.MACHINE),
+                new FlyingPod(800, 140, WEAPONS.SPREAD),
+                new FlyingPod(1300, 160, WEAPONS.LASER),
+                new FlyingPod(1750, 130, WEAPONS.FLAME)
+            ];
+        }
+
+        window.addEventListener('keydown', e => {
+            audio.init();
+            if (player.lives <= 0) {
+                restartGame();
+                return;
+            }
+            switch(e.code) {
+                case 'ArrowLeft': case 'KeyA': keys.left = true; break;
+                case 'ArrowRight': case 'KeyD': keys.right = true; break;
+                case 'ArrowUp': case 'KeyW': keys.up = true; break;
+                case 'ArrowDown': case 'KeyS': keys.down = true; break;
+                case 'KeyX': case 'KeyK': case 'Space':
+                    if (!keys.jump) keys.jumpPressed = true;
+                    keys.jump = true;
+                    break;
+                case 'KeyZ': case 'KeyJ':
+                    if (!keys.fire) keys.firePressed = true;
+                    keys.fire = true;
+                    break;
+            }
+        });
+
+        window.addEventListener('keyup', e => {
+            switch(e.code) {
+                case 'ArrowLeft': case 'KeyA': keys.left = false; break;
+                case 'ArrowRight': case 'KeyD': keys.right = false; break;
+                case 'ArrowUp': case 'KeyW': keys.up = false; break;
+                case 'ArrowDown': case 'KeyS': keys.down = false; break;
+                case 'KeyX': case 'KeyK': case 'Space': keys.jump = false; break;
+                case 'KeyZ': case 'KeyJ': keys.fire = false; break;
+            }
+        });
+
+        // Mobile Touch Events Setup
+        function setupTouchBtn(id, keyName, isInstant = false) {
+            const btn = document.getElementById(id);
+            if (!btn) return;
+            btn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                audio.init();
+                if (isInstant) keys[keyName + 'Pressed'] = true;
+                keys[keyName] = true;
+            });
+            btn.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                keys[keyName] = false;
+            });
+        }
+
+        setupTouchBtn('btnUp', 'up');
+        setupTouchBtn('btnDown', 'down');
+        setupTouchBtn('btnLeft', 'left');
+        setupTouchBtn('btnRight', 'right');
+        setupTouchBtn('btnJump', 'jump', true);
+        setupTouchBtn('btnFire', 'fire', true);
+
+        // Responsive Canvas Resizing
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            const w = container.clientWidth;
+            canvas.style.width = `${w}px`;
+            canvas.style.height = `${w * (V_HEIGHT / V_WIDTH)}px`;
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        window.onload = function() {
+            resizeCanvas();
+            requestAnimationFrame(gameLoop);
+        };
+    </script>
+</body>
+</html>
